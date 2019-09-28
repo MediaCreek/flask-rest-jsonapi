@@ -11,11 +11,6 @@ from flask_rest_jsonapi.errors import jsonapi_errors
 from flask_rest_jsonapi.exceptions import JsonApiException
 from flask_rest_jsonapi.utils import JSONEncoder
 
-try:
-    import sentry_sdk
-except ImportError:
-    sentry_sdk = None
-
 
 def check_headers(func):
     """Check headers according to jsonapi reference
@@ -87,11 +82,12 @@ def jsonapi_exception_formatter(func):
             if current_app.config['DEBUG'] is True:
                 raise e
 
-            if sentry_sdk:
+            try:
+                import sentry_sdk
                 sentry_sdk.capture_exception(e)
-
-            if 'sentry' in current_app.extensions:
-                current_app.extensions['sentry'].captureException()
+            except ImportError:
+                if 'sentry' in current_app.extensions:
+                    current_app.extensions['sentry'].captureException()
 
             exc = JsonApiException(getattr(e,
                                            'detail',
