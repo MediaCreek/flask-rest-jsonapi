@@ -7,6 +7,8 @@ methods, speficy which blueprint to use, define the Api routes and plug addition
 import inspect
 from functools import wraps
 
+from flask import request, abort
+
 from flask_rest_jsonapi.resource import ResourceList, ResourceRelationship
 from flask_rest_jsonapi.decorators import jsonapi_exception_formatter
 
@@ -67,12 +69,6 @@ class Api(object):
         resource.view = view
         url_rule_options = kwargs.get('url_rule_options') or dict()
 
-        for decorator in self.decorators:
-            if hasattr(resource, 'decorators'):
-                resource.decorators += self.decorators
-            else:
-                resource.decorators = self.decorators
-
         view_func = resource.as_view(view)
 
         if 'blueprint' in kwargs:
@@ -99,23 +95,39 @@ class Api(object):
 
         :param oauth_manager: the oauth manager
         """
-        for resource in self.resource_registry:
-            if getattr(resource, 'disable_oauth', None) is not True:
-                for method in getattr(resource, 'methods', ('GET', 'POST', 'PATCH', 'DELETE')):
-                    scope = self.get_scope(resource, method)
-                    setattr(resource,
-                            method.lower(),
-                            oauth_manager.require_oauth(scope)(getattr(resource, method.lower())))
+        @self.app.before_request
+        @jsonapi_exception_formatter
+        def before_request():
+            endpoint = request.endpoint
+            resource = None
+            if endpoint:
+                resource = getattr(self.app.view_functions[endpoint], 'view_class', None)
 
-    def scope_setter(self, func):
-        """Plug oauth scope setter function to the API
+            if resource and not getattr(resource, 'disable_oauth', None):
+                scopes = request.args.get('scopes')
 
-        :param callable func: the callable to use a scope getter
-        """
-        self.get_scope = func
+                if getattr(resource, 'schema'):
+                    scopes = [self.build_scope(resource, request.method)]
+                elif scopes:
+                    scopes = scopes.split(',')
+
+                    if scopes:
+                        scopes = scopes.split(',')
+
+                valid, req = oauth_manager.verify_request(scopes)
+
+                for func in oauth_manager._after_request_funcs:
+                    valid, req = func(valid, req)
+
+                if not valid:
+                    if oauth_manager._invalid_response:
+                        return oauth_manager._invalid_response(req)
+                    return abort(401)
+
+                request.oauth = req
 
     @staticmethod
-    def get_scope(resource, method):
+    def build_scope(resource, method):
         """Compute the name of the scope for oauth
 
         :param Resource resource: the resource manager
@@ -136,19 +148,20 @@ class Api(object):
 
         return '_'.join([prefix, resource.schema.opts.type_])
 
-    def permission_manager(self, permission_manager):
+    def permission_manager(self, permission_manager, with_decorators=True):
         """Use permission manager to enable permission for API
 
         :param callable permission_manager: the permission manager
         """
         self.check_permissions = permission_manager
 
-        for resource in self.resource_registry:
-            if getattr(resource, 'disable_permission', None) is not True:
-                for method in getattr(resource, 'methods', ('GET', 'POST', 'PATCH', 'DELETE')):
-                    setattr(resource,
-                            method.lower(),
-                            self.has_permission()(getattr(resource, method.lower())))
+        if with_decorators:
+            for resource in self.resource_registry:
+                if getattr(resource, 'disable_permission', None) is not True:
+                    for method in getattr(resource, 'methods', ('GET', 'POST', 'PATCH', 'DELETE')):
+                        setattr(resource,
+                                method.lower(),
+                                self.has_permission()(getattr(resource, method.lower())))
 
     def has_permission(self, *args, **kwargs):
         """Decorator used to check permissions before to call resource manager method"""
