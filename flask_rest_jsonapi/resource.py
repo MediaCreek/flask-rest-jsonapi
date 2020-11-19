@@ -21,6 +21,7 @@ from flask_rest_jsonapi.schema import compute_schema, get_relationships, get_mod
 from flask_rest_jsonapi.data_layers.base import BaseDataLayer
 from flask_rest_jsonapi.data_layers.alchemy import SqlalchemyDataLayer
 from flask_rest_jsonapi.utils import JSONEncoder
+from marshmallow_jsonapi.fields import BaseRelationship
 
 
 class ResourceMeta(MethodViewType):
@@ -52,7 +53,7 @@ class ResourceMeta(MethodViewType):
 class Resource(MethodView):
     """Base resource class"""
 
-    def __new__(cls):
+    def __new__(cls, *args, **kwargs):
         """Constructor of a resource instance"""
         if hasattr(cls, '_data_layer'):
             cls._data_layer.resource = cls
@@ -116,7 +117,8 @@ class ResourceList(with_metaclass(ResourceMeta, Resource)):
 
         qs = QSManager(request.args, self.schema)
 
-        objects_count, objects = self.get_collection(qs, kwargs)
+        parent_filter = self._get_parent_filter(request.url, kwargs)
+        objects_count, objects = self.get_collection(qs, kwargs, filters=parent_filter)
 
         schema_kwargs = getattr(self, 'get_schema_kwargs', dict())
         schema_kwargs.update({'many': True})
@@ -128,7 +130,7 @@ class ResourceList(with_metaclass(ResourceMeta, Resource)):
                                 qs,
                                 qs.include)
 
-        result = schema.dump(objects).data
+        result = schema.dump(objects)
 
         view_kwargs = request.view_args if getattr(self, 'view_kwargs', None) is True else dict()
         add_pagination_links(result,
@@ -149,13 +151,15 @@ class ResourceList(with_metaclass(ResourceMeta, Resource)):
 
         qs = QSManager(request.args, self.schema)
 
+        self.before_marshmallow(args, kwargs)
+
         schema = compute_schema(self.schema,
                                 getattr(self, 'post_schema_kwargs', dict()),
                                 qs,
                                 qs.include)
 
         try:
-            data, errors = schema.load(json_data)
+            data = schema.load(json_data)
         except IncorrectTypeError as e:
             errors = e.messages
             for error in errors['errors']:
@@ -169,17 +173,11 @@ class ResourceList(with_metaclass(ResourceMeta, Resource)):
                 message['title'] = "Validation error"
             return errors, 422
 
-        if errors:
-            for error in errors['errors']:
-                error['status'] = "422"
-                error['title'] = "Validation error"
-            return errors, 422
-
         self.before_post(args, kwargs, data=data)
 
         obj = self.create_object(data, kwargs)
 
-        result = schema.dump(obj).data
+        result = schema.dump(obj)
 
         if result['data'].get('links', {}).get('self'):
             final_result = (result, 201, {'Location': result['data']['links']['self']})
@@ -189,6 +187,23 @@ class ResourceList(with_metaclass(ResourceMeta, Resource)):
         result = self.after_post(final_result)
 
         return result
+
+    def _get_parent_filter(self, url, kwargs):
+        """
+        Returns a dictionary of filters that should be applied to ensure only resources
+        belonging to the parent resource are returned
+        """
+
+        url_segments = url.split('/')
+        parent_segment = url_segments[-3]
+        parent_id = url_segments[-2]
+
+        for key, value in self.schema._declared_fields.items():
+            if isinstance(value, BaseRelationship):
+                if value.type_ == parent_segment:
+                    return {value.id_field: parent_id}
+
+        return {}
 
     def before_get(self, args, kwargs):
         """Hook to make custom work before get method"""
@@ -209,8 +224,8 @@ class ResourceList(with_metaclass(ResourceMeta, Resource)):
     def before_marshmallow(self, args, kwargs):
         pass
 
-    def get_collection(self, qs, kwargs):
-        return self._data_layer.get_collection(qs, kwargs)
+    def get_collection(self, qs, kwargs, filters=None):
+        return self._data_layer.get_collection(qs, kwargs, filters=filters)
 
     def create_object(self, data, kwargs):
         return self._data_layer.create_object(data, kwargs)
@@ -235,7 +250,7 @@ class ResourceDetail(with_metaclass(ResourceMeta, Resource)):
                                 qs,
                                 qs.include)
 
-        result = schema.dump(obj).data
+        result = schema.dump(obj) if obj else None
 
         final_result = self.after_get(result)
 
@@ -248,7 +263,6 @@ class ResourceDetail(with_metaclass(ResourceMeta, Resource)):
 
         qs = QSManager(request.args, self.schema)
         schema_kwargs = getattr(self, 'patch_schema_kwargs', dict())
-        schema_kwargs.update({'partial': True})
 
         self.before_marshmallow(args, kwargs)
 
@@ -258,7 +272,7 @@ class ResourceDetail(with_metaclass(ResourceMeta, Resource)):
                                 qs.include)
 
         try:
-            data, errors = schema.load(json_data)
+            data = schema.load(json_data, partial=True)
         except IncorrectTypeError as e:
             errors = e.messages
             for error in errors['errors']:
@@ -272,12 +286,6 @@ class ResourceDetail(with_metaclass(ResourceMeta, Resource)):
                 message['title'] = "Validation error"
             return errors, 422
 
-        if errors:
-            for error in errors['errors']:
-                error['status'] = "422"
-                error['title'] = "Validation error"
-            return errors, 422
-
         if 'id' not in json_data['data']:
             raise BadRequest('Missing id in "data" node',
                              source={'pointer': '/data/id'})
@@ -289,7 +297,7 @@ class ResourceDetail(with_metaclass(ResourceMeta, Resource)):
 
         obj = self.update_object(data, qs, kwargs)
 
-        result = schema.dump(obj).data
+        result = schema.dump(obj)
 
         final_result = self.after_patch(result)
 
@@ -373,7 +381,7 @@ class ResourceRelationship(with_metaclass(ResourceMeta, Resource)):
             schema = compute_schema(self.schema, dict(), qs, qs.include)
 
             serialized_obj = schema.dump(obj)
-            result['included'] = serialized_obj.data.get('included', dict())
+            result['included'] = serialized_obj.get('included', dict())
 
         final_result = self.after_get(result)
 

@@ -1,8 +1,6 @@
 from setuptools import setup, find_packages
 
-
-__version__ = '0.30.1'
-
+__version__ = '0.31.2'
 
 setup(
     name="Flask-REST-JSONAPI",
@@ -15,23 +13,31 @@ setup(
     license='MIT',
     classifiers=[
         'Framework :: Flask',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.8',
         'License :: OSI Approved :: MIT License',
     ],
     keywords='web api rest jsonapi flask sqlalchemy marshmallow',
     packages=find_packages(exclude=['tests']),
     zip_safe=False,
     platforms='any',
-    install_requires=['six',
-                      'Flask>=0.11',
-                      'marshmallow==2.18.0',
-                      'marshmallow_jsonapi',
-                      'sqlalchemy'],
+    install_requires=[
+        'six',
+        'Flask',
+        'marshmallow',
+        'marshmallow_jsonapi',
+        'sqlalchemy'
+    ],
     setup_requires=['pytest-runner'],
     tests_require=['pytest'],
-    extras_require={'tests': 'pytest', 'docs': 'sphinx'}
+    extras_require={
+        'dev': [
+            'pytest',
+            'coveralls',
+            'coverage'
+        ],
+        'docs': 'sphinx'
+    }
 )

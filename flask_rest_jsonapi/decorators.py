@@ -21,8 +21,8 @@ def check_headers(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         if request.method in ('POST', 'PATCH'):
-            if 'Content-Type' in request.headers and\
-                    'application/vnd.api+json' in request.headers['Content-Type'] and\
+            if 'Content-Type' not in request.headers or\
+                    'application/vnd.api+json' not in request.headers['Content-Type'] or\
                     request.headers['Content-Type'] != 'application/vnd.api+json':
                 error = json.dumps(jsonapi_errors([{'source': '',
                                                     'detail': "Content-Type header must be application/vnd.api+json",
@@ -57,7 +57,8 @@ def check_method_requirements(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         error_message = "You must provide {error_field} in {cls} to get access to the default {method} method"
-        error_data = {'cls': args[0].__class__.__name__, 'method': request.method.lower()}
+        error_data = {'cls': args[0].__class__.__name__,
+                      'method': request.method.lower()}
 
         if request.method != 'DELETE':
             if not hasattr(args[0], 'schema'):
@@ -79,8 +80,8 @@ def jsonapi_exception_formatter(func):
                                  e.status,
                                  headers)
         except Exception as e:
-            if current_app.config['DEBUG'] is True:
-                raise e
+            if current_app.config['DEBUG'] is True or current_app.config.get('PROPAGATE_EXCEPTIONS') is True:
+                raise
 
             try:
                 import sentry_sdk
